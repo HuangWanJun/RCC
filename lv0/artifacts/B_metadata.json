@@ -1,0 +1,73 @@
+{
+	"compiler": {
+		"version": "0.8.26+commit.8a97fa7a"
+	},
+	"language": "Solidity",
+	"output": {
+		"abi": [
+			{
+				"inputs": [],
+				"name": "name",
+				"outputs": [
+					{
+						"internalType": "string",
+						"name": "",
+						"type": "string"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [],
+				"name": "text",
+				"outputs": [
+					{
+						"internalType": "string",
+						"name": "",
+						"type": "string"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			}
+		],
+		"devdoc": {
+			"kind": "dev",
+			"methods": {},
+			"version": 1
+		},
+		"userdoc": {
+			"kind": "user",
+			"methods": {},
+			"notice": "1、在继承列表",
+			"version": 1
+		}
+	},
+	"settings": {
+		"compilationTarget": {
+			"lv0/Constructor.sol": "B"
+		},
+		"evmVersion": "cancun",
+		"libraries": {},
+		"metadata": {
+			"bytecodeHash": "ipfs"
+		},
+		"optimizer": {
+			"enabled": false,
+			"runs": 200
+		},
+		"remappings": []
+	},
+	"sources": {
+		"lv0/Constructor.sol": {
+			"keccak256": "0x250bb6494d31cd9a1bb6c218ce70620862d756dbb4dd19eba65f37a055464e91",
+			"license": "MIT",
+			"urls": [
+				"bzz-raw://5b9c0b574982363faad57af8598459f17128c6063f2f046de368f68f3073a5c1",
+				"dweb:/ipfs/QmTnPZz8ZbxdnSWym2H3WeH95jULFLdLGnFTgnQiZtBEYF"
+			]
+		}
+	},
+	"version": 1
+}
