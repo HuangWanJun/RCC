@@ -8,7 +8,7 @@ import (
 type Person struct {
 	//ID   string `uri:"id" binding:"required,uuid"`
 	ID   int    `uri:"id" binding:"required"`
-	Name string `uri:"name" binding:"required"`
+	Name string `uri:"na me" binding:"required"`
 }
 
 func main() {
