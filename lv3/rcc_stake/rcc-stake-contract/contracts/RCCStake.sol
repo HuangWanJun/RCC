@@ -118,15 +118,31 @@ UnstakeRequest 结构体：
     // 用户信息映射，按照 [质押池ID => 用户地址 => 用户状态] 的结构存储
     mapping(uint256 => mapping(address => User)) public user;
 
-
     // ************************************** 事件 **************************************
- event SetRCC(IERC20 indexed RCC);
+    event SetRCC(IERC20 indexed RCC);
     event PauseWithdraw();
     event UnpauseWithdraw();
     event PauseClaim();
     event UnpauseClaim();
     event SetStartBlock(uint256 indexed startBlock);
     event SetEndBlock(uint256 indexed endBlock);
+    event setRccPerBlock(uint256 indexed rccPerBlock);
+    event AddPool(address indexed stTokenAddress, uint256 indexed poolWeight, uint256 indexed lastRewardBlock, uint256 minDepositAmount, uint256 unstakeLockedBlocks);
+
+    event UpdatePoolInfo(uint256 indexed poolId, uint256 indexed minDepositAmount, uint256 indexed unstakeLockedBlocks);
+
+    event SetPoolWeight(uint256 indexed poolId, uint256 indexed poolWeight, uint256 totalPoolWeight);
+
+    event UpdatePool(uint256 indexed poolId, uint256 indexed lastRewardBlock, uint256 totalRCC);
+
+    event Deposit(address indexed user, uint256 indexed poolId, uint256 amount);
+
+    event RequestUnstake(address indexed user, uint256 indexed poolId, uint256 amount);
+
+    event Withdraw(address indexed user, uint256 indexed poolId, uint256 amount, uint256 indexed blockNumber);
+
+    event Claim(address indexed user, uint256 indexed poolId, uint256 rccReward);
+
     /*
     管理操作相关事件：
     - 用于记录重要操作。
@@ -199,21 +215,21 @@ whenNotClaimPaused 修饰符：
         rccPerBlock = _rccPerBlock;
     }
 
-     /*
-    _authorizeUpgrade：用于验证升级操作，仅允许具有升级权限的地址执行。
-    */
-     function _authorizeUpgrade(address newImplementation)
-        internal
-        onlyRole(UPGRADE_ROLE)
-        override
+    /*
+   _authorizeUpgrade：用于验证升级操作，仅允许具有升级权限的地址执行。
+   */
+    function _authorizeUpgrade(address newImplementation)
+    internal
+    onlyRole(UPGRADE_ROLE)
+    override
     {}
 // ************************************** 管理功能 **************************************
     /*
     setRCC：设置 RCC 代币地址。
     - 仅限具有 ADMIN_ROLE 的地址调用。
     */
-    function setRCC(IERC20 _RCC) public onlyRole(ADMIN_ROLE){
-        RCC=_RCC;
+    function setRCC(IERC20 _RCC) public onlyRole(ADMIN_ROLE) {
+        RCC = _RCC;
         emit SetRCC(RCC);
     }
 
@@ -222,44 +238,201 @@ whenNotClaimPaused 修饰符：
     - 分别用于暂停/恢复提现操作。
     - 仅限具有 ADMIN_ROLE 的地址调用。
     */
-    function pauseWithdraw() public onlyRole(ADMIN_ROLE){
+    function pauseWithdraw() public onlyRole(ADMIN_ROLE) {
         require(!withdrawPaused, "Withdraw is already paused");
         withdrawPaused = true;
         emit PauseWithdraw();
     }
 
-    function unpauseWithdraw() public onlyRole(ADMIN_ROLE){
+    function unpauseWithdraw() public onlyRole(ADMIN_ROLE) {
         require(withdrawPaused, "Withdraw is not paused");
         withdrawPaused = false;
         emit UnpauseWithdraw();
     }
     //暂停和取消暂停 Claim
-    function pauseClaim() public onlyRole(ADMIN_ROLE)  {
+    function pauseClaim() public onlyRole(ADMIN_ROLE) {
         require(!claimPaused, "Claim is already paused");
         claimPaused = true;
         emit PauseClaim();
     }
 
-    function unpauseClaim() public onlyRole(ADMIN_ROLE)  {
+    function unpauseClaim() public onlyRole(ADMIN_ROLE) {
         require(claimPaused, "Claim is not paused");
-        claimPaused =false;
+        claimPaused = false;
         emit UnpauseClaim();
     }
 
     //设置区块范围
-    function setStartBlock(uint256 _startBlock) public onlyRole(ADMIN_ROLE)  {
+    function setStartBlock(uint256 _startBlock) public onlyRole(ADMIN_ROLE) {
         require(_startBlock <= endBlock, "start block must be smaller than end block"));
         startBlock = _startBlock;
         emit SetStartBlock(_startBlock);
     }
 
-    function setEndBlock(uint256 _endBlock) public onlyRole(ADMIN_ROLE)  {
-        require(startBlock <= _endBlock,"start block must be smaller than end block");
+    function setEndBlock(uint256 _endBlock) public onlyRole(ADMIN_ROLE) {
+        require(startBlock <= _endBlock, "start block must be smaller than end block");
         endBlock = _endBlock;
         emit SetEndBlock(_endBlock);
     }
 
+    //设置每区块的奖励（setRCCPerBlock）
+    //功能：设置每个区块分发的 RCC 奖励数量。
+    //权限：仅限管理员调用。
+    //逻辑：
+    //检查 _rccPerBlock 是否大于 0。
+    //更新 rccPerBlock 值。
+    //触发事件 SetRCCPerBlock。
+    function setRccPerBlock(uint256 _rccPerBlock) public onlyRole(ADMIN_ROLE) {
+        require(_rccPerBlock > 0, "invalid rccPerBlock");
+        rccPerBlock = _rccPerBlock;
+        emit setRccPerBlock(_rccPerBlock);
+    }
 
+//添加新质押池（addPool）
+//功能：为质押奖励系统添加新的质押池。
 
+//参数名称	数据类型	作用
+//_stTokenAddress	address	指定该池子所用的质押代币地址。
+//_poolWeight	uint256	设置池子的权重，用于奖励分配比例计算。
+//_minDepositAmount	uint256	设置用户质押的最小数量限制。
+//_unstakeLockedBlocks	uint256	质押后需锁仓的区块数量。
+//_withUpdate	bool	是否在添加池子前更新其他池子的奖励状态。
+//触发事件 AddPool。
+    function addPool(address _stTokenAddress, uint256 _poolWeight, uint256 _minDepositAmount, uint256 _unstakeLockedBlocks, bool _withUpdate) public onlyRole(ADMIN_ROLE) {
+        // 如果不是第一个池，质押代币地址必须有效（非 0 地址）。
+        if (pool.length > 0) {
+            require(_stTokenAddress != address(0x0), "invalid staking token address");
+        } else {
+            // 第一个池必须是 ETH 池，其地址设为 0。
+            require(_stTokenAddress == address(0x0), "invalid staking token address");
+        }
 
-}
+        // 确保锁仓的区块数量有效（大于 0）。
+        require(_unstakeLockedBlocks > 0, "invalid withdraw locked blocks");
+
+        // 确保当前区块号小于结束区块号。
+        require(block.number < endBlock, "Already ended");
+
+        // 如果需要更新池子状态，调用 `massUpdatePools`。
+        if (_withUpdate) {
+            // massUpdatePools()
+        }
+        // 设置池子的最后奖励区块号：如果当前区块号大于起始区块号，则取当前区块号，否则取起始区块号。
+        uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
+
+        // 更新总池子权重。
+        totalPoolWeight = totalPoolWeight + _poolWeight;
+
+        // 创建新的池子对象并添加到 `pool` 数组。
+        pool.push(Pool({
+            stTokenAddress: _stTokenAddress,
+            poolWeight: _poolWeight,
+            lastRewardBlock: lastRewardBlock,
+            accRCCPerST: 0, // 累计每个质押代币的 RCC 奖励初始化为 0。
+            stTokenAmount: 0, // 初始质押代币数量为 0。
+            minDepositAmount: _minDepositAmount,
+            unstakeLockedBlocks: _unstakeLockedBlocks
+        }));
+        // 触发事件，记录添加的新池子信息。
+        emit AddPool(_stTokenAddress, _poolWeight, lastRewardBlock, _minDepositAmount, _unstakeLockedBlocks);
+    }
+
+    /**
+ * @notice 更新指定池子的相关信息（如最小质押数量和锁仓区块数量），仅管理员可调用。
+ */
+    function updatePool(uint256 _pid, uint256 _minDepositAmount, uint256 _unstakeLockedBlocks) public onlyRole(ADMIN_ROLE) checkPid(_pid) {
+        pool[_pid].minDepositAmount = _minDepositAmount;
+        pool[_pid].unstakeLockedBlocks = _unstakeLockedBlocks;
+
+        emit UpdatePoolInfo(_pid, _minDepositAmount, _unstakeLockedBlocks);
+    }
+
+/**
+ * @notice 更新池子的权重，仅管理员可调用。
+ */
+    function setPoolWeight(uint256 _pid, uint256 _poolWeight, bool _withUpdate) public onlyRole(ADMIN_ROLE) checkPid(_pid) {
+        require(_poolWeight > 0, "invalid pool weight");
+        if (_withUpdate) {
+            // massUpdatePools();
+        }
+
+        // 更新总池子权重，并修改指定池子的权重。
+        totalPoolWeight = totalPoolWeight - pool[_poolWeight].poolWeight - _poolWeight;
+        pool[_pid].poolWeight = _poolWeight;
+
+        emit SetPoolWeight(_pid, _poolWeight, totalPoolWeight);
+    }
+    // ************************************** QUERY FUNCTION **************************************
+
+    /**
+    * @notice 返回池子数量（池子数组的长度）。
+    */
+    function poolLength() external view returns (uint256)  {
+        return pool.length;
+    }
+
+    /**
+ * @notice Return _from 到 _to 区块范围内所有区块奖励的总量。
+
+ */
+    function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256 multiplier) {
+        require(_from <= _to, "invalid block");
+
+        // 如果 _from 小于奖励开始区块，则将 _from 调整为 startBlock
+        if (_from < startBlock) {_from = startBlock;}
+
+        // 如果 _to 大于奖励结束区块，则将 _to 调整为 endBlock
+        if (_to > endBlock) {_to = endBlock;}
+
+        // 再次确保调整后的 _from 小于或等于 _to
+        require(_from <= _to, "end block must be greater than start block");
+
+        // 使用安全的乘法计算区块范围内的奖励乘数，防止溢出
+        bool success;
+        //它表示 _from 到 _to 区块范围内所有区块奖励的总量。
+        (success, multiplier) = (_to - _from).tryMul(rccPerBlock);
+        require(success, "multiplier overflow");
+
+    }
+
+    //计算用户当前区块的待领取奖励
+    function pendingRCC(uint256 _pid, address _user) external checkPid(_pid) view returns (uint256)  {
+        return;
+    }
+
+    // 计算某用户在某个区块号时在指定池中的待发放奖励 RCC
+    function pendingRCCByBlockNumber(uint256 _pid, address _user, uint256 _blockNumber) public checkPid(_pid) view returns (uint256) {
+        Pool storage pool_ = pool[_pid];
+        User storage user = user[_pid][_user];
+        uint256 accRCCPerST = pool_.accRCCPerST; //每单位质押代币的累计 RCC 奖励（
+        uint256 stSupply = pool_.stTokenAmount; //当前池中质押的代币总量
+
+        if (_blockNumber > pool_.lastRewardBlock && stSupply != 0) {
+            uint256 multiplier = getMultiplier(pool_.lastRewardBlock, _blockNumber); //计算池奖励的乘数
+            uint256 rccForPool = multiplier * pool_.poolWeight / totalPoolWeight;  //计算池中的总奖励：
+            accRCCPerST = accRCCPerST + rccForPool * (1 ether) / stSupply; //更新单位质押代币的累计奖励：
+        }
+
+        // 计算用户待发放奖励
+        return user_.stAmount * accRCCPerST / (1 ether) - user_.finishedRCC + user_.pendingRCC;
+    }
+
+    /**
+     * @notice 获取用户的下注量
+     */
+    function stakingBalance(uint256 _pid, address _user) external checkPid(_pid) view returns (uint256) {
+        return user[_pid][_user].stAmount;
+    }
+
+    // 获取提现金额信息，包括未锁定金额和未锁定金额
+    function withdrawAmount(uint256 _pid, address _user) public checkPid(_pid) view returns(uint256 requestAmount, uint256 pendingWithdrawAmount) {
+        User storage user_ = user[_pid][_user];
+        for (uint256 i = 0; i < user_.requests.length; i++) {
+            if (user_.requests[i].unlockBlocks <= block.number) {
+
+            }
+        }
+
+    }
+
+    }
