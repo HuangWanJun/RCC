@@ -315,7 +315,7 @@ whenNotClaimPaused 修饰符：
 
         // 如果需要更新池子状态，调用 `massUpdatePools`。
         if (_withUpdate) {
-            // massUpdatePools()
+             massUpdatePools();
         }
         // 设置池子的最后奖励区块号：如果当前区块号大于起始区块号，则取当前区块号，否则取起始区块号。
         uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
@@ -353,7 +353,7 @@ whenNotClaimPaused 修饰符：
     function setPoolWeight(uint256 _pid, uint256 _poolWeight, bool _withUpdate) public onlyRole(ADMIN_ROLE) checkPid(_pid) {
         require(_poolWeight > 0, "invalid pool weight");
         if (_withUpdate) {
-            // massUpdatePools();
+             massUpdatePools();
         }
 
         // 更新总池子权重，并修改指定池子的权重。
@@ -425,12 +425,92 @@ whenNotClaimPaused 修饰符：
     }
 
     // 获取提现金额信息，包括未锁定金额和未锁定金额
+    //查询用户在指定池中已申请的提取金额，以及当前可提取的金额（即已满足解锁区块的部分）。
     function withdrawAmount(uint256 _pid, address _user) public checkPid(_pid) view returns(uint256 requestAmount, uint256 pendingWithdrawAmount) {
         User storage user_ = user[_pid][_user];
         for (uint256 i = 0; i < user_.requests.length; i++) {
+            //检查每个提取请求是否满足解锁条件。
+            //unlockBlocks 提取请求对应的解锁区块号。 如果请求的解锁区块号小于等于当前区块号，则说明该请求的金额已满足解锁条件。
             if (user_.requests[i].unlockBlocks <= block.number) {
-
+                pendingWithdrawAmount = pendingWithdrawAmount + user_.requests[i].amount;
             }
+            requestAmount = requestAmount + user_.requests[i].amount;
+        }
+
+    }
+
+    // ************************************** PUBLIC FUNCTION **************************************
+    //更新指定池（_pid）的奖励变量，使其与当前区块的状态保持同步。
+    //计算从上次更新奖励到当前区块产生的总奖励。
+    //根据池的权重分配奖励，更新池的每股奖励（accRCCPerST）。
+    //将池的最后奖励更新块号设置为当前块号。
+    function updatePool(uint256 _pid) public checkPid(_pid)  {
+         Pool storage pool_ = pool[_pid];
+        if(block.number <= pool[_pid]){
+            return;
+        }
+            // 区块范围内所有区块奖励的总量。
+
+        (bool success1, uint256 totalRCC) = getMultiplier(pool_.lastRewardBlock, block.number).tryMul(pool_.poolWeight);
+        require(success1, "overflow");
+
+       // 分配奖励（按总权重比例）
+        (success1, totalRCC) = totalRCC.tryDiv(totalPoolWeight);
+        require(success1, "overflow");
+
+        //. 获取池的总质押量
+        uint256 stSupply = pool_.stTokenAmount; //当前池中质押的代币总量
+
+        // 计算并更新每股奖励
+        if (stSupply > 0) {
+            (bool success2, uint256 totalRCC_) = totalRCC.tryMul(1 ether);
+            require(success2, "overflow");
+
+            //将奖励按池的总质押量分配，计算每单位质押代币的奖励
+            (success2, totalRCC_) = totalRCC_.tryDiv(stSupply);
+            require(success2, "overflow");
+
+            //将计算出的每单位奖励累加到池的累积每股奖励
+            (bool success3, uint256 accRCCPerST) = pool_.accRCCPerST.tryAdd(totalRCC_);
+            require(success3, "overflow");
+            pool_.accRCCPerST = accRCCPerST;
+
+
+
+        }
+//pool_.lastRewardBlock = block.number;
+        pool_.lastRewardBlock = block.number;
+        emit UpdatePool(_pid, pool_.lastRewardBlock, totalRCC);
+    }
+
+    function massUpdatePools()  {
+        uint256 length = pool.length;
+        for (uint256 pid = 0; pid < length; ++pid) {
+            updatePool(pid);
+        }
+    }
+
+    function depositETH() public whenNotPaused() payable {
+        Pool storage pool_ = pool[ETH_PID];
+        require(pool_.stTokenAddress == address(0x0), "invalid staking token address");
+
+        //msg.value 是用户通过交易发送的 ETH 金额（以 wei 为单位）。
+        //将发送的 ETH 金额存入变量 _amount 中。
+        uint256 _amount = msg.value;
+        require(_amount >= pool_.minDepositAmount, "deposit amount is too small");
+
+        _deposit(ETH_PID, _amount);
+    }
+
+
+    //用户向指定池（pool）中存入 ERC-20 代币
+    function deposit(uint256 _pid, uint256 _amount) public whenNotPaused() checkPid(_pid) {
+        require(_pid != 0, "deposit not support ETH staking");
+        Pool storage pool_ = pool[_pid];
+        require(_amount > pool_.minDepositAmount, "deposit amount is too small");
+
+        if(_amount > 0) {
+            IERC20(pool_.stTokenAddress).safeTransferFrom(address(msg.sender), address(this), _amount);
         }
 
     }
